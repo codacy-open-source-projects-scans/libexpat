@@ -17,7 +17,8 @@
    Copyright (c) 2018      Marco Maggi <marco.maggi-ipsu@poste.it>
    Copyright (c) 2019      David Loffredo <loffredo@steptools.com>
    Copyright (c) 2020      Tim Gates <tim.gates@iress.com>
-   Copyright (c) 2021      Dong-hee Na <donghee.na@python.org>
+   Copyright (c) 2021      Donghee Na <donghee.na@python.org>
+   Copyright (c) 2023      Sony Corporation / Snild Dolkow <snild@sony.com>
    Licensed under the MIT license:
 
    Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -137,6 +138,9 @@ XML_Bool g_resumable = XML_FALSE;
 /* Used to control abort checks in some tests */
 XML_Bool g_abortable = XML_FALSE;
 
+/* Used to control _XML_Parse_SINGLE_BYTES() chunk size */
+int g_chunkSize = 1;
+
 /* Common test functions */
 
 void
@@ -170,28 +174,25 @@ _xml_failure(XML_Parser parser, const char *file, int line) {
            "u, offset %" XML_FMT_INT_MOD "u)\n    reported from %s, line %d\n",
            err, XML_ErrorString(err), XML_GetCurrentLineNumber(parser),
            XML_GetCurrentColumnNumber(parser), file, line);
-  _fail_unless(0, file, line, buffer);
+  _assert_true(0, file, line, buffer);
 }
 
 enum XML_Status
 _XML_Parse_SINGLE_BYTES(XML_Parser parser, const char *s, int len,
                         int isFinal) {
-  enum XML_Status res = XML_STATUS_ERROR;
+  const int chunksize = g_chunkSize;
   int offset = 0;
-
-  if (len == 0) {
-    return XML_Parse(parser, s, len, isFinal);
-  }
-
-  for (; offset < len; offset++) {
-    const int innerIsFinal = (offset == len - 1) && isFinal;
-    const char c = s[offset]; /* to help out-of-bounds detection */
-    res = XML_Parse(parser, &c, sizeof(char), innerIsFinal);
-    if (res != XML_STATUS_OK) {
-      return res;
+  if (chunksize > 0) {
+    // parse in chunks of `chunksize` bytes as long as possible
+    for (; offset + chunksize < len; offset += chunksize) {
+      enum XML_Status res = XML_Parse(parser, s + offset, chunksize, XML_FALSE);
+      if (res != XML_STATUS_OK) {
+        return res;
+      }
     }
   }
-  return res;
+  // parse the final chunk, the size of which will be <= chunksize
+  return XML_Parse(parser, s + offset, len - offset, isFinal);
 }
 
 void
@@ -199,9 +200,9 @@ _expect_failure(const char *text, enum XML_Error errorCode,
                 const char *errorMessage, const char *file, int lineno) {
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_OK)
-    /* Hackish use of _fail_unless() macro, but let's us report
+    /* Hackish use of _assert_true() macro, but let's us report
        the right filename and line number. */
-    _fail_unless(0, file, lineno, errorMessage);
+    _assert_true(0, file, lineno, errorMessage);
   if (XML_GetErrorCode(g_parser) != errorCode)
     _xml_failure(g_parser, file, lineno);
 }

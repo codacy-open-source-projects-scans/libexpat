@@ -34,7 +34,7 @@
 # Unlike most of Expat,
 # this file is copyrighted under the BSD-license for buildsystem files of KDE.
 
-cmake_minimum_required(VERSION 3.1.3)
+cmake_minimum_required(VERSION 3.5.0)
 
 project(expat
     VERSION
@@ -42,6 +42,9 @@ project(expat
     LANGUAGES
         C
 )
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)  # i.e. -std=c99 rather than default -std=gnu99
 
 set(PACKAGE_BUGREPORT "expat-bugs@libexpat.org")
 set(PACKAGE_NAME "expat")
@@ -136,7 +139,7 @@ if(UNIX OR _EXPAT_HELP)
     expat_shy_set(EXPAT_WITH_LIBBSD OFF CACHE BOOL "Utilize libbsd (for arc4random_buf)")
 endif()
 expat_shy_set(EXPAT_ENABLE_INSTALL ON CACHE BOOL "Install expat files in cmake install target")
-expat_shy_set(EXPAT_CONTEXT_BYTES 1024 CACHE STRING "Define to specify how much context to retain around the current parse point")
+expat_shy_set(EXPAT_CONTEXT_BYTES 1024 CACHE STRING "Define to specify how much context to retain around the current parse point, 0 to disable")
 mark_as_advanced(EXPAT_CONTEXT_BYTES)
 expat_shy_set(EXPAT_DTD ON CACHE BOOL "Define to make parameter entity parsing functionality available")
 mark_as_advanced(EXPAT_DTD)
@@ -167,6 +170,10 @@ endif()
 if(EXPAT_BUILD_TESTS)
     # We have to call enable_language() before modifying any CMAKE_CXX_* variables
     enable_language(CXX)
+
+    set(CMAKE_CXX_STANDARD 11)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_CXX_EXTENSIONS OFF)  # i.e. -std=c++11 rather than default -std=gnu++11
 endif()
 
 #
@@ -280,6 +287,9 @@ _expat_copy_bool_int(EXPAT_NS               XML_NS)
 if(NOT WIN32)
     _expat_copy_bool_int(EXPAT_DEV_URANDOM  XML_DEV_URANDOM)
 endif()
+if(NOT EXPAT_CONTEXT_BYTES GREATER 0)  # in particular with -DEXPAT_CONTEXT_BYTES=OFF
+    set(EXPAT_CONTEXT_BYTES 0)
+endif()
 set(XML_CONTEXT_BYTES ${EXPAT_CONTEXT_BYTES})
 
 macro(expat_install)
@@ -311,6 +321,10 @@ if (EXPAT_WARNINGS_AS_ERRORS)
         add_definitions(/WX)
     else()
         set(EXTRA_COMPILE_FLAGS "${EXTRA_COMPILE_FLAGS} -Werror")
+        if(MINGW)
+            # To avoid "error: unknown conversion type character ‘l’ in format [-Werror=format=]"
+            set(EXTRA_COMPILE_FLAGS "${EXTRA_COMPILE_FLAGS} -Wno-format")
+        endif()
     endif()
 endif()
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${EXTRA_COMPILE_FLAGS}")
@@ -593,23 +607,6 @@ if(EXPAT_BUILD_TESTS)
     ## these are unittests that can be run on any platform
     enable_testing()
 
-    set(test_SRCS
-        tests/acc_tests.c
-        tests/alloc_tests.c
-        tests/basic_tests.c
-        tests/chardata.c
-        tests/common.c
-        tests/dummy.c
-        tests/handlers.c
-        tests/memcheck.c
-        tests/minicheck.c
-        tests/misc_tests.c
-        tests/ns_tests.c
-        tests/nsalloc_tests.c
-        tests/structdata.c
-        ${_EXPAT_C_SOURCES}
-    )
-
     if(NOT MSVC)
         if(MINGW)
             set(host whatever-mingw32)  # for nothing but run.sh
@@ -625,9 +622,43 @@ if(EXPAT_BUILD_TESTS)
         endif()
     endfunction()
 
-    set(_EXPAT_TEST_TARGETS runtests runtestspp)
-    add_executable(runtests   tests/runtests.c     ${test_SRCS})
-    add_executable(runtestspp tests/runtestspp.cpp ${test_SRCS})
+    set(_EXPAT_TEST_TARGETS runtests runtests_cxx)
+
+    add_executable(runtests
+        tests/acc_tests.c
+        tests/alloc_tests.c
+        tests/basic_tests.c
+        tests/chardata.c
+        tests/common.c
+        tests/dummy.c
+        tests/handlers.c
+        tests/memcheck.c
+        tests/minicheck.c
+        tests/misc_tests.c
+        tests/ns_tests.c
+        tests/nsalloc_tests.c
+        tests/runtests.c
+        tests/structdata.c
+        ${_EXPAT_C_SOURCES}
+    )
+
+    add_executable(runtests_cxx
+        tests/acc_tests_cxx.cpp
+        tests/alloc_tests_cxx.cpp
+        tests/basic_tests_cxx.cpp
+        tests/chardata_cxx.cpp
+        tests/common_cxx.cpp
+        tests/dummy_cxx.cpp
+        tests/handlers_cxx.cpp
+        tests/memcheck_cxx.cpp
+        tests/minicheck_cxx.cpp
+        tests/misc_tests_cxx.cpp
+        tests/ns_tests_cxx.cpp
+        tests/nsalloc_tests_cxx.cpp
+        tests/runtests_cxx.cpp
+        tests/structdata_cxx.cpp
+        ${_EXPAT_C_SOURCES}
+    )
 
     foreach(_target ${_EXPAT_TEST_TARGETS})
         set_property(TARGET ${_target} PROPERTY RUNTIME_OUTPUT_DIRECTORY tests)

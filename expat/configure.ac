@@ -180,6 +180,8 @@ AC_ARG_WITH([tests],
   [with_tests=yes])
 AM_CONDITIONAL([WITH_TESTS], [test x${with_tests} = xyes])
 
+AS_IF([test x${with_tests} = xyes],
+      [AX_CXX_COMPILE_STDCXX_11([noext], [mandatory])])
 
 AS_VAR_SET([EXPATCFG_ON_MINGW],[no])
 AS_CASE("${host_os}",
@@ -325,9 +327,10 @@ AS_HELP_STRING([--disable-xml-context],
 AS_IF([test "x${enable_xml_context}" != "xno"],
   [AS_IF([test "x${enable_xml_context}" = "xyes" \
             -o "x${enable_xml_context}" = "x"],
-     [AS_VAR_SET(enable_xml_context,1024)])
-   AC_DEFINE_UNQUOTED([XML_CONTEXT_BYTES], [${enable_xml_context}],
-     [Define to specify how much context to retain around the current parse point.])])
+     [AS_VAR_SET(enable_xml_context,1024)])],
+  [AS_VAR_SET(enable_xml_context,0)])
+AC_DEFINE_UNQUOTED([XML_CONTEXT_BYTES], [${enable_xml_context}],
+  [Define to specify how much context to retain around the current parse point, 0 to disable.])
 
 AC_ARG_WITH([docbook],
   [AS_HELP_STRING([--with-docbook],

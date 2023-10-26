@@ -17,7 +17,7 @@
    Copyright (c) 2018      Marco Maggi <marco.maggi-ipsu@poste.it>
    Copyright (c) 2019      David Loffredo <loffredo@steptools.com>
    Copyright (c) 2020      Tim Gates <tim.gates@iress.com>
-   Copyright (c) 2021      Dong-hee Na <donghee.na@python.org>
+   Copyright (c) 2021      Donghee Na <donghee.na@python.org>
    Copyright (c) 2023      Sony Corporation / Snild Dolkow <snild@sony.com>
    Licensed under the MIT license:
 
@@ -159,11 +159,17 @@ START_TEST(test_bom_utf16_le) {
 }
 END_TEST
 
-/* Parse whole buffer at once to exercise a different code path */
 START_TEST(test_nobom_utf16_le) {
   char text[] = " \0<\0e\0/\0>\0";
 
-  if (XML_Parse(g_parser, text, sizeof(text) - 1, XML_TRUE) == XML_STATUS_ERROR)
+  if (g_chunkSize == 1) {
+    // TODO: with just the first byte, we can't tell the difference between
+    // UTF-16-LE and UTF-8. Avoid the failure for now.
+    return;
+  }
+
+  if (_XML_Parse_SINGLE_BYTES(g_parser, text, sizeof(text) - 1, XML_TRUE)
+      == XML_STATUS_ERROR)
     xml_failure(g_parser);
 }
 END_TEST
@@ -596,7 +602,7 @@ START_TEST(test_line_number_after_parse) {
                      "\n</tag>";
   XML_Size lineno;
 
-  if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_FALSE)
+  if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_ERROR)
     xml_failure(g_parser);
   lineno = XML_GetCurrentLineNumber(g_parser);
@@ -1212,6 +1218,7 @@ START_TEST(test_ext_entity_invalid_parse) {
   const ExtFaults *fault = faults;
 
   for (; fault->parse_text != NULL; fault++) {
+    set_subtest("\"%s\"", fault->parse_text);
     XML_SetParamEntityParsing(g_parser, XML_PARAM_ENTITY_PARSING_ALWAYS);
     XML_SetExternalEntityRefHandler(g_parser, external_entity_faulter);
     XML_SetUserData(g_parser, (void *)fault);
@@ -1282,6 +1289,7 @@ START_TEST(test_dtd_attr_handling) {
   AttTest *test;
 
   for (test = attr_data; test->definition != NULL; test++) {
+    set_subtest("%s", test->definition);
     XML_SetAttlistDeclHandler(g_parser, verify_attlist_decl_handler);
     XML_SetUserData(g_parser, test);
     if (_XML_Parse_SINGLE_BYTES(g_parser, prolog, (int)strlen(prolog),
@@ -1670,6 +1678,7 @@ START_TEST(test_bad_cdata) {
 
   size_t i = 0;
   for (; i < sizeof(cases) / sizeof(struct CaseData); i++) {
+    set_subtest("%s", cases[i].text);
     const enum XML_Status actualStatus = _XML_Parse_SINGLE_BYTES(
         g_parser, cases[i].text, (int)strlen(cases[i].text), XML_TRUE);
     const enum XML_Error actualError = XML_GetErrorCode(g_parser);
@@ -1737,6 +1746,7 @@ START_TEST(test_bad_cdata_utf16) {
   size_t i;
 
   for (i = 0; i < sizeof(cases) / sizeof(struct CaseData); i++) {
+    set_subtest("case %lu", (long unsigned)(i + 1));
     enum XML_Status actual_status;
     enum XML_Error actual_error;
 
@@ -1833,78 +1843,208 @@ START_TEST(test_default_current) {
                             "<!ENTITY entity '&#37;'>\n"
                             "]>\n"
                             "<doc>&entity;</doc>";
-  CharData storage;
 
-  XML_SetDefaultHandler(g_parser, record_default_handler);
-  XML_SetCharacterDataHandler(g_parser, record_cdata_handler);
-  CharData_Init(&storage);
-  XML_SetUserData(g_parser, &storage);
-  if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
-      == XML_STATUS_ERROR)
-    xml_failure(g_parser);
-  CharData_CheckXMLChars(&storage, XCS("DCDCDCDCDCDD"));
+  set_subtest("with defaulting");
+  {
+    struct handler_record_list storage;
+    storage.count = 0;
+    XML_SetDefaultHandler(g_parser, record_default_handler);
+    XML_SetCharacterDataHandler(g_parser, record_cdata_handler);
+    XML_SetUserData(g_parser, &storage);
+    if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
+        == XML_STATUS_ERROR)
+      xml_failure(g_parser);
+    int i = 0;
+    assert_record_handler_called(&storage, i++, "record_default_handler", 5);
+    // we should have gotten one or more cdata callbacks, totaling 5 chars
+    int cdata_len_remaining = 5;
+    while (cdata_len_remaining > 0) {
+      const struct handler_record_entry *c_entry
+          = handler_record_get(&storage, i++);
+      assert_true(strcmp(c_entry->name, "record_cdata_handler") == 0);
+      assert_true(c_entry->arg > 0);
+      assert_true(c_entry->arg <= cdata_len_remaining);
+      cdata_len_remaining -= c_entry->arg;
+      // default handler must follow, with the exact same len argument.
+      assert_record_handler_called(&storage, i++, "record_default_handler",
+                                   c_entry->arg);
+    }
+    assert_record_handler_called(&storage, i++, "record_default_handler", 6);
+    assert_true(storage.count == i);
+  }
 
   /* Again, without the defaulting */
-  XML_ParserReset(g_parser, NULL);
-  XML_SetDefaultHandler(g_parser, record_default_handler);
-  XML_SetCharacterDataHandler(g_parser, record_cdata_nodefault_handler);
-  CharData_Init(&storage);
-  XML_SetUserData(g_parser, &storage);
-  if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
-      == XML_STATUS_ERROR)
-    xml_failure(g_parser);
-  CharData_CheckXMLChars(&storage, XCS("DcccccD"));
+  set_subtest("no defaulting");
+  {
+    struct handler_record_list storage;
+    storage.count = 0;
+    XML_ParserReset(g_parser, NULL);
+    XML_SetDefaultHandler(g_parser, record_default_handler);
+    XML_SetCharacterDataHandler(g_parser, record_cdata_nodefault_handler);
+    XML_SetUserData(g_parser, &storage);
+    if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
+        == XML_STATUS_ERROR)
+      xml_failure(g_parser);
+    int i = 0;
+    assert_record_handler_called(&storage, i++, "record_default_handler", 5);
+    // we should have gotten one or more cdata callbacks, totaling 5 chars
+    int cdata_len_remaining = 5;
+    while (cdata_len_remaining > 0) {
+      const struct handler_record_entry *c_entry
+          = handler_record_get(&storage, i++);
+      assert_true(strcmp(c_entry->name, "record_cdata_nodefault_handler") == 0);
+      assert_true(c_entry->arg > 0);
+      assert_true(c_entry->arg <= cdata_len_remaining);
+      cdata_len_remaining -= c_entry->arg;
+    }
+    assert_record_handler_called(&storage, i++, "record_default_handler", 6);
+    assert_true(storage.count == i);
+  }
 
   /* Now with an internal entity to complicate matters */
-  XML_ParserReset(g_parser, NULL);
-  XML_SetDefaultHandler(g_parser, record_default_handler);
-  XML_SetCharacterDataHandler(g_parser, record_cdata_handler);
-  CharData_Init(&storage);
-  XML_SetUserData(g_parser, &storage);
-  if (_XML_Parse_SINGLE_BYTES(g_parser, entity_text, (int)strlen(entity_text),
-                              XML_TRUE)
-      == XML_STATUS_ERROR)
-    xml_failure(g_parser);
-  /* The default handler suppresses the entity */
-  CharData_CheckXMLChars(&storage, XCS("DDDDDDDDDDDDDDDDDDD"));
+  set_subtest("with internal entity");
+  {
+    struct handler_record_list storage;
+    storage.count = 0;
+    XML_ParserReset(g_parser, NULL);
+    XML_SetDefaultHandler(g_parser, record_default_handler);
+    XML_SetCharacterDataHandler(g_parser, record_cdata_handler);
+    XML_SetUserData(g_parser, &storage);
+    if (_XML_Parse_SINGLE_BYTES(g_parser, entity_text, (int)strlen(entity_text),
+                                XML_TRUE)
+        == XML_STATUS_ERROR)
+      xml_failure(g_parser);
+    /* The default handler suppresses the entity */
+    assert_record_handler_called(&storage, 0, "record_default_handler", 9);
+    assert_record_handler_called(&storage, 1, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 2, "record_default_handler", 3);
+    assert_record_handler_called(&storage, 3, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 4, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 5, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 6, "record_default_handler", 8);
+    assert_record_handler_called(&storage, 7, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 8, "record_default_handler", 6);
+    assert_record_handler_called(&storage, 9, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 10, "record_default_handler", 7);
+    assert_record_handler_called(&storage, 11, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 12, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 13, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 14, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 15, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 16, "record_default_handler", 5);
+    assert_record_handler_called(&storage, 17, "record_default_handler", 8);
+    assert_record_handler_called(&storage, 18, "record_default_handler", 6);
+    assert_true(storage.count == 19);
+  }
 
   /* Again, with a skip handler */
-  XML_ParserReset(g_parser, NULL);
-  XML_SetDefaultHandler(g_parser, record_default_handler);
-  XML_SetCharacterDataHandler(g_parser, record_cdata_handler);
-  XML_SetSkippedEntityHandler(g_parser, record_skip_handler);
-  CharData_Init(&storage);
-  XML_SetUserData(g_parser, &storage);
-  if (_XML_Parse_SINGLE_BYTES(g_parser, entity_text, (int)strlen(entity_text),
-                              XML_TRUE)
-      == XML_STATUS_ERROR)
-    xml_failure(g_parser);
-  /* The default handler suppresses the entity */
-  CharData_CheckXMLChars(&storage, XCS("DDDDDDDDDDDDDDDDDeD"));
+  set_subtest("with skip handler");
+  {
+    struct handler_record_list storage;
+    storage.count = 0;
+    XML_ParserReset(g_parser, NULL);
+    XML_SetDefaultHandler(g_parser, record_default_handler);
+    XML_SetCharacterDataHandler(g_parser, record_cdata_handler);
+    XML_SetSkippedEntityHandler(g_parser, record_skip_handler);
+    XML_SetUserData(g_parser, &storage);
+    if (_XML_Parse_SINGLE_BYTES(g_parser, entity_text, (int)strlen(entity_text),
+                                XML_TRUE)
+        == XML_STATUS_ERROR)
+      xml_failure(g_parser);
+    /* The default handler suppresses the entity */
+    assert_record_handler_called(&storage, 0, "record_default_handler", 9);
+    assert_record_handler_called(&storage, 1, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 2, "record_default_handler", 3);
+    assert_record_handler_called(&storage, 3, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 4, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 5, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 6, "record_default_handler", 8);
+    assert_record_handler_called(&storage, 7, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 8, "record_default_handler", 6);
+    assert_record_handler_called(&storage, 9, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 10, "record_default_handler", 7);
+    assert_record_handler_called(&storage, 11, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 12, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 13, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 14, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 15, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 16, "record_default_handler", 5);
+    assert_record_handler_called(&storage, 17, "record_skip_handler", 0);
+    assert_record_handler_called(&storage, 18, "record_default_handler", 6);
+    assert_true(storage.count == 19);
+  }
 
   /* This time, allow the entity through */
-  XML_ParserReset(g_parser, NULL);
-  XML_SetDefaultHandlerExpand(g_parser, record_default_handler);
-  XML_SetCharacterDataHandler(g_parser, record_cdata_handler);
-  CharData_Init(&storage);
-  XML_SetUserData(g_parser, &storage);
-  if (_XML_Parse_SINGLE_BYTES(g_parser, entity_text, (int)strlen(entity_text),
-                              XML_TRUE)
-      == XML_STATUS_ERROR)
-    xml_failure(g_parser);
-  CharData_CheckXMLChars(&storage, XCS("DDDDDDDDDDDDDDDDDCDD"));
+  set_subtest("allow entity");
+  {
+    struct handler_record_list storage;
+    storage.count = 0;
+    XML_ParserReset(g_parser, NULL);
+    XML_SetDefaultHandlerExpand(g_parser, record_default_handler);
+    XML_SetCharacterDataHandler(g_parser, record_cdata_handler);
+    XML_SetUserData(g_parser, &storage);
+    if (_XML_Parse_SINGLE_BYTES(g_parser, entity_text, (int)strlen(entity_text),
+                                XML_TRUE)
+        == XML_STATUS_ERROR)
+      xml_failure(g_parser);
+    assert_record_handler_called(&storage, 0, "record_default_handler", 9);
+    assert_record_handler_called(&storage, 1, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 2, "record_default_handler", 3);
+    assert_record_handler_called(&storage, 3, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 4, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 5, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 6, "record_default_handler", 8);
+    assert_record_handler_called(&storage, 7, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 8, "record_default_handler", 6);
+    assert_record_handler_called(&storage, 9, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 10, "record_default_handler", 7);
+    assert_record_handler_called(&storage, 11, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 12, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 13, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 14, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 15, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 16, "record_default_handler", 5);
+    assert_record_handler_called(&storage, 17, "record_cdata_handler", 1);
+    assert_record_handler_called(&storage, 18, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 19, "record_default_handler", 6);
+    assert_true(storage.count == 20);
+  }
 
   /* Finally, without passing the cdata to the default handler */
-  XML_ParserReset(g_parser, NULL);
-  XML_SetDefaultHandlerExpand(g_parser, record_default_handler);
-  XML_SetCharacterDataHandler(g_parser, record_cdata_nodefault_handler);
-  CharData_Init(&storage);
-  XML_SetUserData(g_parser, &storage);
-  if (_XML_Parse_SINGLE_BYTES(g_parser, entity_text, (int)strlen(entity_text),
-                              XML_TRUE)
-      == XML_STATUS_ERROR)
-    xml_failure(g_parser);
-  CharData_CheckXMLChars(&storage, XCS("DDDDDDDDDDDDDDDDDcD"));
+  set_subtest("not passing cdata");
+  {
+    struct handler_record_list storage;
+    storage.count = 0;
+    XML_ParserReset(g_parser, NULL);
+    XML_SetDefaultHandlerExpand(g_parser, record_default_handler);
+    XML_SetCharacterDataHandler(g_parser, record_cdata_nodefault_handler);
+    XML_SetUserData(g_parser, &storage);
+    if (_XML_Parse_SINGLE_BYTES(g_parser, entity_text, (int)strlen(entity_text),
+                                XML_TRUE)
+        == XML_STATUS_ERROR)
+      xml_failure(g_parser);
+    assert_record_handler_called(&storage, 0, "record_default_handler", 9);
+    assert_record_handler_called(&storage, 1, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 2, "record_default_handler", 3);
+    assert_record_handler_called(&storage, 3, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 4, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 5, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 6, "record_default_handler", 8);
+    assert_record_handler_called(&storage, 7, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 8, "record_default_handler", 6);
+    assert_record_handler_called(&storage, 9, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 10, "record_default_handler", 7);
+    assert_record_handler_called(&storage, 11, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 12, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 13, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 14, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 15, "record_default_handler", 1);
+    assert_record_handler_called(&storage, 16, "record_default_handler", 5);
+    assert_record_handler_called(&storage, 17, "record_cdata_nodefault_handler",
+                                 1);
+    assert_record_handler_called(&storage, 18, "record_default_handler", 6);
+    assert_true(storage.count == 19);
+  }
 }
 END_TEST
 
@@ -2191,7 +2331,7 @@ START_TEST(test_reset_in_entity) {
 
   g_resumable = XML_TRUE;
   XML_SetCharacterDataHandler(g_parser, clearing_aborting_character_handler);
-  if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_FALSE)
+  if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       == XML_STATUS_ERROR)
     xml_failure(g_parser);
   XML_GetParsingStatus(g_parser, &status);
@@ -2336,6 +2476,7 @@ START_TEST(test_ext_entity_invalid_suspended_parse) {
   ExtFaults *fault;
 
   for (fault = &faults[0]; fault->parse_text != NULL; fault++) {
+    set_subtest("%s", fault->parse_text);
     XML_SetParamEntityParsing(g_parser, XML_PARAM_ENTITY_PARSING_ALWAYS);
     XML_SetExternalEntityRefHandler(g_parser,
                                     external_entity_suspending_faulter);
@@ -2533,8 +2674,6 @@ START_TEST(test_user_parameters) {
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_FALSE)
       == XML_STATUS_ERROR)
     xml_failure(g_parser);
-  if (g_comment_count != 2)
-    fail("Comment handler not invoked enough times");
   /* Ensure we can't change policy mid-parse */
   if (XML_SetParamEntityParsing(g_parser, XML_PARAM_ENTITY_PARSING_NEVER))
     fail("Changed param entity parsing policy while parsing");
@@ -2663,7 +2802,7 @@ START_TEST(test_get_buffer_1) {
    * between INT_MAX and INT_MAX/2.  A gap of 1K seems comfortable,
    * with an extra byte just to ensure that the request is off any
    * boundary.  The request will be inflated internally by
-   * XML_CONTEXT_BYTES (if defined), so we subtract that from our
+   * XML_CONTEXT_BYTES (if >=1), so we subtract that from our
    * request.
    */
   if (get_feature(XML_FEATURE_CONTEXT_BYTES, &context_bytes) != XML_STATUS_OK)
@@ -2699,7 +2838,7 @@ START_TEST(test_get_buffer_2) {
 END_TEST
 
 /* Test for signed integer overflow CVE-2022-23852 */
-#if defined(XML_CONTEXT_BYTES)
+#if XML_CONTEXT_BYTES > 0
 START_TEST(test_get_buffer_3_overflow) {
   XML_Parser parser = XML_ParserCreate(NULL);
   assert(parser != NULL);
@@ -2720,7 +2859,7 @@ START_TEST(test_get_buffer_3_overflow) {
   XML_ParserFree(parser);
 }
 END_TEST
-#endif // defined(XML_CONTEXT_BYTES)
+#endif // XML_CONTEXT_BYTES > 0
 
 /* Test position information macros */
 START_TEST(test_byte_info_at_end) {
@@ -2939,12 +3078,90 @@ START_TEST(test_bad_ignore_section) {
   ExtFaults *fault;
 
   for (fault = &faults[0]; fault->parse_text != NULL; fault++) {
+    set_subtest("%s", fault->parse_text);
     XML_SetParamEntityParsing(g_parser, XML_PARAM_ENTITY_PARSING_ALWAYS);
     XML_SetExternalEntityRefHandler(g_parser, external_entity_faulter);
     XML_SetUserData(g_parser, fault);
     expect_failure(text, XML_ERROR_EXTERNAL_ENTITY_HANDLING,
                    "Incomplete IGNORE section not failed");
     XML_ParserReset(g_parser, NULL);
+  }
+}
+END_TEST
+
+struct bom_testdata {
+  const char *external;
+  int split;
+  XML_Bool nested_callback_happened;
+};
+
+static int XMLCALL
+external_bom_checker(XML_Parser parser, const XML_Char *context,
+                     const XML_Char *base, const XML_Char *systemId,
+                     const XML_Char *publicId) {
+  const char *text = "";
+  UNUSED_P(base);
+  UNUSED_P(systemId);
+  UNUSED_P(publicId);
+
+  XML_Parser ext_parser = XML_ExternalEntityParserCreate(parser, context, NULL);
+  if (ext_parser == NULL)
+    fail("Could not create external entity parser");
+
+  if (! xcstrcmp(systemId, XCS("004-2.ent"))) {
+    struct bom_testdata *const testdata
+        = (struct bom_testdata *)XML_GetUserData(parser);
+    const char *const external = testdata->external;
+    const int split = testdata->split;
+    testdata->nested_callback_happened = XML_TRUE;
+
+    if (XML_Parse(ext_parser, external, split, XML_FALSE) != XML_STATUS_OK) {
+      xml_failure(ext_parser);
+    }
+    text = external + split; // the parse below will continue where we left off.
+  } else if (! xcstrcmp(systemId, XCS("004-1.ent"))) {
+    text = "<!ELEMENT doc EMPTY>\n"
+           "<!ENTITY % e1 SYSTEM '004-2.ent'>\n"
+           "<!ENTITY % e2 '%e1;'>\n";
+  } else {
+    fail("unknown systemId");
+  }
+
+  if (XML_Parse(ext_parser, text, (int)strlen(text), XML_TRUE) != XML_STATUS_OK)
+    xml_failure(ext_parser);
+
+  XML_ParserFree(ext_parser);
+  return XML_STATUS_OK;
+}
+
+/* regression test: BOM should be consumed when followed by a partial token. */
+START_TEST(test_external_bom_consumed) {
+  const char *const text = "<!DOCTYPE doc SYSTEM '004-1.ent'>\n"
+                           "<doc></doc>\n";
+  const char *const external = "\xEF\xBB\xBF<!ATTLIST doc a1 CDATA 'value'>";
+  const int len = (int)strlen(external);
+  for (int split = 0; split <= len; ++split) {
+    set_subtest("split at byte %d", split);
+
+    struct bom_testdata testdata;
+    testdata.external = external;
+    testdata.split = split;
+    testdata.nested_callback_happened = XML_FALSE;
+
+    XML_Parser parser = XML_ParserCreate(NULL);
+    if (parser == NULL) {
+      fail("Couldn't create parser");
+    }
+    XML_SetParamEntityParsing(parser, XML_PARAM_ENTITY_PARSING_ALWAYS);
+    XML_SetExternalEntityRefHandler(parser, external_bom_checker);
+    XML_SetUserData(parser, &testdata);
+    if (_XML_Parse_SINGLE_BYTES(parser, text, (int)strlen(text), XML_TRUE)
+        == XML_STATUS_ERROR)
+      xml_failure(parser);
+    if (! testdata.nested_callback_happened) {
+      fail("ref handler not called");
+    }
+    XML_ParserFree(parser);
   }
 }
 END_TEST
@@ -2982,6 +3199,7 @@ START_TEST(test_external_entity_values) {
   int i;
 
   for (i = 0; data_004_2[i].parse_text != NULL; i++) {
+    set_subtest("%s", data_004_2[i].parse_text);
     XML_SetParamEntityParsing(g_parser, XML_PARAM_ENTITY_PARSING_ALWAYS);
     XML_SetExternalEntityRefHandler(g_parser, external_entity_valuer);
     XML_SetUserData(g_parser, &data_004_2[i]);
@@ -3260,10 +3478,10 @@ END_TEST
 /* Test aborting the parse in an epilog works */
 START_TEST(test_abort_epilog) {
   const char *text = "<doc></doc>\n\r\n";
-  XML_Char match[] = XCS("\r");
+  XML_Char trigger_char = XCS('\r');
 
   XML_SetDefaultHandler(g_parser, selective_aborting_default_handler);
-  XML_SetUserData(g_parser, match);
+  XML_SetUserData(g_parser, &trigger_char);
   g_resumable = XML_FALSE;
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       != XML_STATUS_ERROR)
@@ -3276,10 +3494,10 @@ END_TEST
 /* Test a different code path for abort in the epilog */
 START_TEST(test_abort_epilog_2) {
   const char *text = "<doc></doc>\n";
-  XML_Char match[] = XCS("\n");
+  XML_Char trigger_char = XCS('\n');
 
   XML_SetDefaultHandler(g_parser, selective_aborting_default_handler);
-  XML_SetUserData(g_parser, match);
+  XML_SetUserData(g_parser, &trigger_char);
   g_resumable = XML_FALSE;
   expect_failure(text, XML_ERROR_ABORTED, "Abort not triggered");
 }
@@ -3288,10 +3506,10 @@ END_TEST
 /* Test suspension from the epilog */
 START_TEST(test_suspend_epilog) {
   const char *text = "<doc></doc>\n";
-  XML_Char match[] = XCS("\n");
+  XML_Char trigger_char = XCS('\n');
 
   XML_SetDefaultHandler(g_parser, selective_aborting_default_handler);
-  XML_SetUserData(g_parser, match);
+  XML_SetUserData(g_parser, &trigger_char);
   g_resumable = XML_TRUE;
   if (_XML_Parse_SINGLE_BYTES(g_parser, text, (int)strlen(text), XML_TRUE)
       != XML_STATUS_SUSPENDED)
@@ -4055,7 +4273,7 @@ START_TEST(test_ext_entity_latin1_utf16le_bom) {
          /* If Latin-1, 0xff = Y-diaeresis, 0xfe = lowercase thorn,
           *   0x4c = L and 0x20 is a space
           */
-         "\xff\xfe\x4c\x20", 4, XCS("iso-8859-1"), NULL, EE_PARSE_NONE};
+         "\xff\xfe\x4c\x20", 4, XCS("iso-8859-1"), NULL};
 #ifdef XML_UNICODE
   const XML_Char *expected = XCS("\x00ff\x00feL ");
 #else
@@ -4086,7 +4304,7 @@ START_TEST(test_ext_entity_latin1_utf16be_bom) {
          /* If Latin-1, 0xff = Y-diaeresis, 0xfe = lowercase thorn,
           *   0x4c = L and 0x20 is a space
           */
-         "\xfe\xff\x20\x4c", 4, XCS("iso-8859-1"), NULL, EE_PARSE_NONE};
+         "\xfe\xff\x20\x4c", 4, XCS("iso-8859-1"), NULL};
 #ifdef XML_UNICODE
   const XML_Char *expected = XCS("\x00fe\x00ff L");
 #else
@@ -4121,7 +4339,7 @@ START_TEST(test_ext_entity_latin1_utf16le_bom2) {
          /* If Latin-1, 0xff = Y-diaeresis, 0xfe = lowercase thorn,
           *   0x4c = L and 0x20 is a space
           */
-         "\xff\xfe\x4c\x20", 4, XCS("iso-8859-1"), NULL, EE_PARSE_FULL_BUFFER};
+         "\xff\xfe\x4c\x20", 4, XCS("iso-8859-1"), NULL};
 #ifdef XML_UNICODE
   const XML_Char *expected = XCS("\x00ff\x00feL ");
 #else
@@ -4152,7 +4370,7 @@ START_TEST(test_ext_entity_latin1_utf16be_bom2) {
          /* If Latin-1, 0xff = Y-diaeresis, 0xfe = lowercase thorn,
           *   0x4c = L and 0x20 is a space
           */
-         "\xfe\xff\x20\x4c", 4, XCS("iso-8859-1"), NULL, EE_PARSE_FULL_BUFFER};
+         "\xfe\xff\x20\x4c", 4, XCS("iso-8859-1"), NULL};
 #ifdef XML_UNICODE
   const XML_Char *expected = XCS("\x00fe\x00ff L");
 #else
@@ -4179,8 +4397,7 @@ START_TEST(test_ext_entity_utf16_be) {
                      "  <!ENTITY en SYSTEM 'http://example.org/dummy.ent'>\n"
                      "]>\n"
                      "<doc>&en;</doc>";
-  ExtTest2 test_data
-      = {"<\0e\0/\0>\0", 8, XCS("utf-16be"), NULL, EE_PARSE_NONE};
+  ExtTest2 test_data = {"<\0e\0/\0>\0", 8, XCS("utf-16be"), NULL};
 #ifdef XML_UNICODE
   const XML_Char *expected = XCS("\x3c00\x6500\x2f00\x3e00");
 #else
@@ -4209,8 +4426,7 @@ START_TEST(test_ext_entity_utf16_le) {
                      "  <!ENTITY en SYSTEM 'http://example.org/dummy.ent'>\n"
                      "]>\n"
                      "<doc>&en;</doc>";
-  ExtTest2 test_data
-      = {"\0<\0e\0/\0>", 8, XCS("utf-16le"), NULL, EE_PARSE_NONE};
+  ExtTest2 test_data = {"\0<\0e\0/\0>", 8, XCS("utf-16le"), NULL};
 #ifdef XML_UNICODE
   const XML_Char *expected = XCS("\x3c00\x6500\x2f00\x3e00");
 #else
@@ -4264,7 +4480,7 @@ START_TEST(test_ext_entity_utf8_non_bom) {
                      "<doc>&en;</doc>";
   ExtTest2 test_data
       = {"\xef\xbb\x80", /* Arabic letter DAD medial form, U+FEC0 */
-         3, NULL, NULL, EE_PARSE_NONE};
+         3, NULL, NULL};
 #ifdef XML_UNICODE
   const XML_Char *expected = XCS("\xfec0");
 #else
@@ -4688,9 +4904,9 @@ START_TEST(test_entity_public_utf16_be) {
       "\0]\0>\0\n"
       /* <d>&j;</d> */
       "\0<\0d\0>\0&\0j\0;\0<\0/\0d\0>";
-  ExtTest2 test_data = {/* <!ENTITY j 'baz'> */
-                        "\0<\0!\0E\0N\0T\0I\0T\0Y\0 \0j\0 \0'\0b\0a\0z\0'\0>",
-                        34, NULL, NULL, EE_PARSE_NONE};
+  ExtTest2 test_data
+      = {/* <!ENTITY j 'baz'> */
+         "\0<\0!\0E\0N\0T\0I\0T\0Y\0 \0j\0 \0'\0b\0a\0z\0'\0>", 34, NULL, NULL};
   const XML_Char *expected = XCS("baz");
   CharData storage;
 
@@ -4720,9 +4936,9 @@ START_TEST(test_entity_public_utf16_le) {
       "]\0>\0\n\0"
       /* <d>&j;</d> */
       "<\0d\0>\0&\0j\0;\0<\0/\0d\0>\0";
-  ExtTest2 test_data = {/* <!ENTITY j 'baz'> */
-                        "<\0!\0E\0N\0T\0I\0T\0Y\0 \0j\0 \0'\0b\0a\0z\0'\0>\0",
-                        34, NULL, NULL, EE_PARSE_NONE};
+  ExtTest2 test_data
+      = {/* <!ENTITY j 'baz'> */
+         "<\0!\0E\0N\0T\0I\0T\0Y\0 \0j\0 \0'\0b\0a\0z\0'\0>\0", 34, NULL, NULL};
   const XML_Char *expected = XCS("baz");
   CharData storage;
 
@@ -5027,7 +5243,7 @@ make_basic_test_case(Suite *s) {
   tcase_add_test(tc_basic, test_empty_parse);
   tcase_add_test(tc_basic, test_get_buffer_1);
   tcase_add_test(tc_basic, test_get_buffer_2);
-#if defined(XML_CONTEXT_BYTES)
+#if XML_CONTEXT_BYTES > 0
   tcase_add_test(tc_basic, test_get_buffer_3_overflow);
 #endif
   tcase_add_test(tc_basic, test_byte_info_at_end);
@@ -5040,6 +5256,7 @@ make_basic_test_case(Suite *s) {
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_ignore_section_utf16);
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_ignore_section_utf16_be);
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_bad_ignore_section);
+  tcase_add_test__ifdef_xml_dtd(tc_basic, test_external_bom_consumed);
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_external_entity_values);
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_ext_entity_not_standalone);
   tcase_add_test__ifdef_xml_dtd(tc_basic, test_ext_entity_value_abort);

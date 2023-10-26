@@ -360,7 +360,7 @@ and the definition of character types in the case of
 <code>XML_UNICODE_WCHAR_T</code>.  The symbols are:</p>
 
 <dl class="cpp-symbols">
-<dt>XML_DTD</dt>
+<dt><a name="XML_DTD">XML_DTD</a></dt>
 <dd>Include support for using and reporting DTD-based content.  If
 this is defined, default attribute values from an external DTD subset
 are reported and attribute value normalization occurs based on the
@@ -373,24 +373,24 @@ XML_SetBillionLaughsAttackProtectionMaximumAmplification</a></code> and <code>
 <a href="#XML_SetBillionLaughsAttackProtectionActivationThreshold">
 XML_SetBillionLaughsAttackProtectionActivationThreshold</a></code> available.</dd>
 
-<dt>XML_NS</dt>
+<dt><a name="XML_NS">XML_NS</a></dt>
 <dd>When defined, support for the <cite><a href=
 "https://www.w3.org/TR/REC-xml-names/" >Namespaces in XML</a></cite>
 specification is included.</dd>
 
-<dt>XML_UNICODE</dt>
+<dt><a name="XML_UNICODE">XML_UNICODE</a></dt>
 <dd>When defined, character data reported to the application is
 encoded in UTF-16 using wide characters of the type
 <code>XML_Char</code>.  This is implied if
 <code>XML_UNICODE_WCHAR_T</code> is defined.</dd>
 
-<dt>XML_UNICODE_WCHAR_T</dt>
+<dt><a name="XML_UNICODE_WCHAR_T">XML_UNICODE_WCHAR_T</a></dt>
 <dd>If defined, causes the <code>XML_Char</code> character type to be
 defined using the <code>wchar_t</code> type; otherwise, <code>unsigned
 short</code> is used.  Defining this implies
 <code>XML_UNICODE</code>.</dd>
 
-<dt>XML_LARGE_SIZE</dt>
+<dt><a name="XML_LARGE_SIZE">XML_LARGE_SIZE</a></dt>
 <dd>If defined, causes the <code>XML_Size</code> and <code>XML_Index</code>
 integer types to be at least 64 bits in size. This is intended to support
 processing of very large input streams, where the return values of
@@ -400,23 +400,23 @@ processing of very large input streams, where the return values of
 could overflow. It may not be supported by all compilers, and is turned
 off by default.</dd>
 
-<dt>XML_CONTEXT_BYTES</dt>
+<dt><a name="XML_CONTEXT_BYTES">XML_CONTEXT_BYTES</a></dt>
 <dd>The number of input bytes of markup context which the parser will
 ensure are available for reporting via <code><a href=
 "#XML_GetInputContext" >XML_GetInputContext</a></code>.  This is
-normally set to 1024, and must be set to a positive integer.  If this
-is not defined, the input context will not be available and <code><a
+normally set to 1024, and must be set to a positive integer to enable.
+If this is set to zero, the input context will not be available and <code><a
 href= "#XML_GetInputContext" >XML_GetInputContext</a></code> will
 always report <code>NULL</code>.  Without this, Expat has a smaller memory
 footprint and can be faster.</dd>
 
-<dt>XML_STATIC</dt>
+<dt><a name="XML_STATIC">XML_STATIC</a></dt>
 <dd>On Windows, this should be set if Expat is going to be linked
 statically with the code that calls it; this is required to get all
 the right MSVC magic annotations correct.  This is ignored on other
 platforms.</dd>
 
-<dt>XML_ATTR_INFO</dt>
+<dt><a name="XML_ATTR_INFO">XML_ATTR_INFO</a></dt>
 <dd>If defined, makes the additional function <code><a href=
 "#XML_GetAttributeInfo" >XML_GetAttributeInfo</a></code> available
 for reporting attribute byte offsets.</dd>
@@ -949,16 +949,20 @@ XML_Parser XMLCALL
 XML_ParserCreate(const XML_Char *encoding);
 </pre>
 <div class="fcndef">
+<p>
 Construct a new parser. If encoding is non-<code>NULL</code>, it specifies a
 character encoding to use for the document. This overrides the document
 encoding declaration. There are four built-in encodings:
+</p>
 <ul>
 <li>US-ASCII</li>
 <li>UTF-8</li>
 <li>UTF-16</li>
 <li>ISO-8859-1</li>
 </ul>
+<p>
 Any other value will invoke a call to the UnknownEncodingHandler.
+</p>
 </div>
 
 <h4 id="XML_ParserCreateNS">XML_ParserCreateNS</h4>
@@ -1099,6 +1103,7 @@ enum XML_Status {
 };
 </pre>
 <div class="fcndef">
+<p>
 Parse some more of the document. The string <code>s</code> is a buffer
 containing part (or perhaps all) of the document. The number of bytes of s
 that are part of the document is indicated by <code>len</code>. This means
@@ -1108,12 +1113,40 @@ memory that <code>s</code> points at, then a memory fault is likely. The
 <code>isFinal</code> parameter informs the parser that this is the last
 piece of the document. Frequently, the last piece is empty (i.e.
 <code>len</code> is zero.)
+</p>
+
+<p>
 If a parse error occurred, it returns <code>XML_STATUS_ERROR</code>.
 Otherwise it returns <code>XML_STATUS_OK</code> value.
 Note that regardless of the return value, there is no guarantee that all
 provided input has been parsed; only after <a href="#isFinal">the
 concluding call</a> will all handler callbacks and parsing errors have
 happened.
+</p>
+
+<p>
+Simplified, <code>XML_Parse</code> can be considered a convenience wrapper
+that is pairing calls
+to <code><a href="#XML_GetBuffer">XML_GetBuffer</a></code>
+and <code><a href="#XML_ParseBuffer">XML_ParseBuffer</a></code>
+(when Expat is built with macro <code>XML_CONTEXT_BYTES</code>
+defined to a positive value, which is both common and default).
+<code>XML_Parse</code> is then functionally equivalent to calling
+<code><a href="#XML_GetBuffer">XML_GetBuffer</a></code>,
+<code>memcpy</code>, and
+<code><a href="#XML_ParseBuffer">XML_ParseBuffer</a></code>.
+</p>
+
+<p>
+To avoid double copying of the input, direct use of functions
+<code><a href="#XML_GetBuffer">XML_GetBuffer</a></code> and
+<code><a href="#XML_ParseBuffer">XML_ParseBuffer</a></code> is advised
+for most production use, e.g.
+if you're using <code>read</code> or similar functionality to fill your
+buffers, fill directly into the buffer from
+<code><a href="#XML_GetBuffer">XML_GetBuffer</a></code>,
+then parse with <code><a href="#XML_ParseBuffer">XML_ParseBuffer</a></code>.
+</p>
 </div>
 
 <h4 id="XML_ParseBuffer">XML_ParseBuffer</h4>
@@ -2103,7 +2136,7 @@ untranslated bytes of the input.</p>
 triggering a call spans over a very large amount of input, the actual
 parse position may be before the beginning of the buffer.</p>
 
-<p>If <code>XML_CONTEXT_BYTES</code> is not defined, this will always
+<p>If <code>XML_CONTEXT_BYTES</code> is zero, this will always
 return <code>NULL</code>.</p>
 </div>
 

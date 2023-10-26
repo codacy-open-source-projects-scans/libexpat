@@ -17,7 +17,8 @@
    Copyright (c) 2018      Marco Maggi <marco.maggi-ipsu@poste.it>
    Copyright (c) 2019      David Loffredo <loffredo@steptools.com>
    Copyright (c) 2020      Tim Gates <tim.gates@iress.com>
-   Copyright (c) 2021      Dong-hee Na <donghee.na@python.org>
+   Copyright (c) 2021      Donghee Na <donghee.na@python.org>
+   Copyright (c) 2023      Sony Corporation / Snild Dolkow <snild@sony.com>
    Licensed under the MIT license:
 
    Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -324,14 +325,11 @@ extern int XMLCALL external_entity_oneshot_loader(XML_Parser parser,
                                                   const XML_Char *systemId,
                                                   const XML_Char *publicId);
 
-enum ee_parse_flags { EE_PARSE_NONE = 0x00, EE_PARSE_FULL_BUFFER = 0x01 };
-
 typedef struct ExtTest2 {
   const char *parse_text;
   int parse_len;
   const XML_Char *encoding;
   CharData *storage;
-  enum ee_parse_flags flags;
 } ExtTest2;
 
 extern int XMLCALL external_entity_loader2(XML_Parser parser,
@@ -407,14 +405,11 @@ extern int XMLCALL external_entity_parser_create_alloc_fail_handler(
     const XML_Char *systemId, const XML_Char *publicId);
 
 #  if defined(XML_DTD)
-typedef enum XML_Status (*XmlParseFunction)(XML_Parser, const char *, int, int);
-
 struct AccountingTestCase {
   const char *primaryText;
   const char *firstExternalText;  /* often NULL */
   const char *secondExternalText; /* often NULL */
   const unsigned long long expectedCountBytesIndirectExtra;
-  XML_Bool singleBytesWanted;
 };
 
 extern int accounting_external_entity_ref_handler(XML_Parser parser,
@@ -471,7 +466,16 @@ extern void XMLCALL byte_character_handler(void *userData, const XML_Char *s,
 extern void XMLCALL ext2_accumulate_characters(void *userData,
                                                const XML_Char *s, int len);
 
-/* Handlers that record their invocation by single characters */
+/* Handlers that record their `len` arg and a single identifying character */
+
+struct handler_record_entry {
+  const char *name;
+  int arg;
+};
+struct handler_record_list {
+  int count;
+  struct handler_record_entry entries[50]; // arbitrary big-enough max count
+};
 
 extern void XMLCALL record_default_handler(void *userData, const XML_Char *s,
                                            int len);
@@ -492,6 +496,22 @@ extern void XMLCALL record_element_start_handler(void *userData,
 
 extern void XMLCALL record_element_end_handler(void *userData,
                                                const XML_Char *name);
+
+extern const struct handler_record_entry *
+_handler_record_get(const struct handler_record_list *storage, const int index,
+                    const char *file, const int line);
+
+#  define handler_record_get(storage, index)                                   \
+    _handler_record_get((storage), (index), __FILE__, __LINE__)
+
+#  define assert_record_handler_called(storage, index, expected_name,          \
+                                       expected_arg)                           \
+    do {                                                                       \
+      const struct handler_record_entry *e                                     \
+          = handler_record_get(storage, index);                                \
+      assert_true(strcmp(e->name, expected_name) == 0);                        \
+      assert_true(e->arg == (expected_arg));                                   \
+    } while (0)
 
 /* Entity Declaration Handlers */
 #  define ENTITY_MATCH_FAIL (-1)
