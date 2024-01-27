@@ -39,7 +39,7 @@ if [[ ${RUNNER_OS} = macOS ]]; then
     export PATH="/usr/local/opt/coreutils/libexec/gnubin${PATH:+:}${PATH}"
     export PATH="/usr/local/opt/findutils/libexec/gnubin${PATH:+:}${PATH}"
 elif [[ ${RUNNER_OS} = Linux ]]; then
-    export PATH="/usr/lib/llvm-17/bin:${PATH}"
+    export PATH="/usr/lib/llvm-18/bin:${PATH}"
 else
     echo "Unsupported RUNNER_OS \"${RUNNER_OS}\"." >&2
     exit 1
@@ -65,9 +65,6 @@ elif [[ ${MODE} = cmake-oos ]]; then
     make VERBOSE=1 CTEST_OUTPUT_ON_FAILURE=1 all test
     make DESTDIR="${PWD}"/ROOT install
     find ROOT -printf "%P\n" | sort
-elif [[ ${MODE} = clang-format ]]; then
-    ./apply-clang-format.sh
-    git diff --exit-code
 elif [[ ${MODE} = coverage-sh ]]; then
     ./coverage.sh
 else
