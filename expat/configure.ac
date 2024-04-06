@@ -160,7 +160,6 @@ AC_C_BIGENDIAN([AC_DEFINE([WORDS_BIGENDIAN], 1)
 AC_DEFINE_UNQUOTED([BYTEORDER], $BYTEORDER, [1234 = LILENDIAN, 4321 = BIGENDIAN])
 
 AC_C_CONST
-AC_TYPE_SIZE_T
 
 AC_ARG_WITH([xmlwf],
   [AS_HELP_STRING([--without-xmlwf], [do not build xmlwf])],
@@ -215,7 +214,7 @@ AC_LINK_IFELSE([AC_LANG_SOURCE([
     #else
     # include <stdlib.h>  /* for arc4random_buf on BSD */
     #endif
-    int main() {
+    int main(void) {
       char dummy[[123]];  // double brackets for m4
       arc4random_buf(dummy, 0U);
       return 0;
@@ -232,7 +231,7 @@ AC_LINK_IFELSE([AC_LANG_SOURCE([
        #else
        # include <stdlib.h>
        #endif
-       int main() {
+       int main(void) {
           arc4random();
           return 0;
        }
@@ -254,7 +253,7 @@ AS_IF([test "x$with_getrandom" != xno],
    AC_LINK_IFELSE([AC_LANG_SOURCE([
        #include <stdlib.h>  /* for NULL */
        #include <sys/random.h>
-       int main() {
+       int main(void) {
          return getrandom(NULL, 0U, 0U);
        }
      ])],
@@ -278,7 +277,7 @@ AS_IF([test "x$with_sys_getrandom" != xno],
        #include <stdlib.h>  /* for NULL */
        #include <unistd.h>  /* for syscall */
        #include <sys/syscall.h>  /* for SYS_getrandom */
-       int main() {
+       int main(void) {
          syscall(SYS_getrandom, NULL, 0, 0);
          return 0;
      }
