@@ -134,11 +134,6 @@
 #  endif /* defined(GRND_NONBLOCK) */
 #endif   /* defined(HAVE_GETRANDOM) || defined(HAVE_SYSCALL_GETRANDOM) */
 
-#if defined(HAVE_LIBBSD)                                                       \
-    && (defined(HAVE_ARC4RANDOM_BUF) || defined(HAVE_ARC4RANDOM))
-#  include <bsd/stdlib.h>
-#endif
-
 #if defined(_WIN32) && ! defined(LOAD_LIBRARY_SEARCH_SYSTEM32)
 #  define LOAD_LIBRARY_SEARCH_SYSTEM32 0x00000800
 #endif
@@ -155,8 +150,6 @@
       * Linux >=3.17 + glibc (including <2.25) (syscall SYS_getrandom): HAVE_SYSCALL_GETRANDOM, \
       * BSD / macOS >=10.7 / glibc >=2.36 (arc4random_buf): HAVE_ARC4RANDOM_BUF, \
       * BSD / macOS (including <10.7) / glibc >=2.36 (arc4random): HAVE_ARC4RANDOM, \
-      * libbsd (arc4random_buf): HAVE_ARC4RANDOM_BUF + HAVE_LIBBSD, \
-      * libbsd (arc4random): HAVE_ARC4RANDOM + HAVE_LIBBSD, \
       * Linux (including <3.17) / BSD / macOS (including <10.7) / Solaris >=8 (/dev/urandom): XML_DEV_URANDOM, \
       * Windows >=Vista (rand_s): _WIN32. \
     \
@@ -311,8 +304,11 @@ typedef struct tag {
   const char *rawName; /* tagName in the original encoding */
   int rawNameLength;
   TAG_NAME name; /* tagName in the API encoding */
-  char *buf;     /* buffer for name components */
-  char *bufEnd;  /* end of the buffer */
+  union {
+    char *raw;     /* for byte-level access (rawName storage) */
+    XML_Char *str; /* for character-level access (converted name) */
+  } buf;           /* buffer for name components */
+  char *bufEnd;    /* end of the buffer */
   BINDING *bindings;
 } TAG;
 
@@ -1937,7 +1933,7 @@ XML_ParserFree(XML_Parser parser) {
     }
     p = tagList;
     tagList = tagList->parent;
-    FREE(parser, p->buf);
+    FREE(parser, p->buf.raw);
     destroyBindings(p->bindings, parser);
     FREE(parser, p);
   }
@@ -2602,7 +2598,7 @@ XML_GetBuffer(XML_Parser parser, int len) {
       // NOTE: We are avoiding MALLOC(..) here to leave limiting
       //       the input size to the application using Expat.
       newBuf = parser->m_mem.malloc_fcn(bufferSize);
-      if (newBuf == 0) {
+      if (newBuf == NULL) {
         parser->m_errorCode = XML_ERROR_NO_MEMORY;
         return NULL;
       }
@@ -3129,7 +3125,7 @@ storeRawNames(XML_Parser parser) {
     size_t bufSize;
     size_t nameLen = sizeof(XML_Char) * (tag->name.strLen + 1);
     size_t rawNameLen;
-    char *rawNameBuf = tag->buf + nameLen;
+    char *rawNameBuf = tag->buf.raw + nameLen;
     /* Stop if already stored.  Since m_tagStack is a stack, we can stop
        at the first entry that has already been copied; everything
        below it in the stack is already been accounted for in a
@@ -3145,22 +3141,22 @@ storeRawNames(XML_Parser parser) {
     if (rawNameLen > (size_t)INT_MAX - nameLen)
       return XML_FALSE;
     bufSize = nameLen + rawNameLen;
-    if (bufSize > (size_t)(tag->bufEnd - tag->buf)) {
-      char *temp = REALLOC(parser, tag->buf, bufSize);
+    if (bufSize > (size_t)(tag->bufEnd - tag->buf.raw)) {
+      char *temp = REALLOC(parser, tag->buf.raw, bufSize);
       if (temp == NULL)
         return XML_FALSE;
-      /* if tag->name.str points to tag->buf (only when namespace
+      /* if tag->name.str points to tag->buf.str (only when namespace
          processing is off) then we have to update it
       */
-      if (tag->name.str == (XML_Char *)tag->buf)
+      if (tag->name.str == tag->buf.str)
         tag->name.str = (XML_Char *)temp;
       /* if tag->name.localPart is set (when namespace processing is on)
          then update it as well, since it will always point into tag->buf
       */
       if (tag->name.localPart)
         tag->name.localPart
-            = (XML_Char *)temp + (tag->name.localPart - (XML_Char *)tag->buf);
-      tag->buf = temp;
+            = (XML_Char *)temp + (tag->name.localPart - tag->buf.str);
+      tag->buf.raw = temp;
       tag->bufEnd = temp + bufSize;
       rawNameBuf = temp + nameLen;
     }
@@ -3475,12 +3471,12 @@ doContent(XML_Parser parser, int startTagLevel, const ENCODING *enc,
         tag = MALLOC(parser, sizeof(TAG));
         if (! tag)
           return XML_ERROR_NO_MEMORY;
-        tag->buf = MALLOC(parser, INIT_TAG_BUF_SIZE);
-        if (! tag->buf) {
+        tag->buf.raw = MALLOC(parser, INIT_TAG_BUF_SIZE);
+        if (! tag->buf.raw) {
           FREE(parser, tag);
           return XML_ERROR_NO_MEMORY;
         }
-        tag->bufEnd = tag->buf + INIT_TAG_BUF_SIZE;
+        tag->bufEnd = tag->buf.raw + INIT_TAG_BUF_SIZE;
       }
       tag->bindings = NULL;
       tag->parent = parser->m_tagStack;
@@ -3493,32 +3489,32 @@ doContent(XML_Parser parser, int startTagLevel, const ENCODING *enc,
       {
         const char *rawNameEnd = tag->rawName + tag->rawNameLength;
         const char *fromPtr = tag->rawName;
-        toPtr = (XML_Char *)tag->buf;
+        toPtr = tag->buf.str;
         for (;;) {
           int convLen;
           const enum XML_Convert_Result convert_res
               = XmlConvert(enc, &fromPtr, rawNameEnd, (ICHAR **)&toPtr,
                            (ICHAR *)tag->bufEnd - 1);
-          convLen = (int)(toPtr - (XML_Char *)tag->buf);
+          convLen = (int)(toPtr - tag->buf.str);
           if ((fromPtr >= rawNameEnd)
               || (convert_res == XML_CONVERT_INPUT_INCOMPLETE)) {
             tag->name.strLen = convLen;
             break;
           }
-          if (SIZE_MAX / 2 < (size_t)(tag->bufEnd - tag->buf))
+          if (SIZE_MAX / 2 < (size_t)(tag->bufEnd - tag->buf.raw))
             return XML_ERROR_NO_MEMORY;
-          const size_t bufSize = (size_t)(tag->bufEnd - tag->buf) * 2;
+          const size_t bufSize = (size_t)(tag->bufEnd - tag->buf.raw) * 2;
           {
-            char *temp = REALLOC(parser, tag->buf, bufSize);
+            char *temp = REALLOC(parser, tag->buf.raw, bufSize);
             if (temp == NULL)
               return XML_ERROR_NO_MEMORY;
-            tag->buf = temp;
+            tag->buf.raw = temp;
             tag->bufEnd = temp + bufSize;
             toPtr = (XML_Char *)temp + convLen;
           }
         }
       }
-      tag->name.str = (XML_Char *)tag->buf;
+      tag->name.str = tag->buf.str;
       *toPtr = XML_T('\0');
       result
           = storeAtts(parser, enc, s, &(tag->name), &(tag->bindings), account);
@@ -8111,7 +8107,7 @@ poolBytesToAllocateFor(int blockSize) {
 static XML_Bool FASTCALL
 poolGrow(STRING_POOL *pool) {
   if (pool->freeBlocks) {
-    if (pool->start == 0) {
+    if (pool->start == NULL) {
       pool->blocks = pool->freeBlocks;
       pool->freeBlocks = pool->freeBlocks->next;
       pool->blocks->next = NULL;
