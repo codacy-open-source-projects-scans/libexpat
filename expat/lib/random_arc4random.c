@@ -1,4 +1,4 @@
-/* C++ compilation harness for the test suite.
+/*
                             __  __            _
                          ___\ \/ /_ __   __ _| |_
                         / _ \\  /| '_ \ / _` | __|
@@ -6,7 +6,7 @@
                         \___/_/\_\ .__/ \__,_|\__|
                                  |_| XML parser
 
-   Copyright (c) 2023 Sebastian Pipping <sebastian@pipping.org>
+   Copyright (c) 2017-2026 Sebastian Pipping <sebastian@pipping.org>
    Licensed under the MIT license:
 
    Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -29,4 +29,28 @@
    USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#include "acc_tests.c"
+#include "random_arc4random.h"
+
+#include <stdint.h> // for uint8_t, uint32_t
+#include <stdlib.h> // for arc4random
+
+// Help clang-tidy out with prototype of function `arc4random`
+#if defined(XML_CLANG_TIDY)
+uint32_t arc4random(void);
+#endif
+
+void
+writeRandomBytes_arc4random(void *target, size_t count) {
+  size_t bytesWrittenTotal = 0;
+
+  while (bytesWrittenTotal < count) {
+    const uint32_t random32 = arc4random();
+    size_t i = 0;
+
+    for (; (i < sizeof(random32)) && (bytesWrittenTotal < count);
+         i++, bytesWrittenTotal++) {
+      const uint8_t random8 = (uint8_t)(random32 >> (i * 8));
+      ((uint8_t *)target)[bytesWrittenTotal] = random8;
+    }
+  }
+}
